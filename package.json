@@ -1,16 +1,27 @@
 {
   "name": "import-tanstack-intent",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yukukotani/import-tanstack-intent.git"
+  },
   "bin": {
     "import-tanstack-intent": "./dist/cli.mjs"
   },
+  "files": [
+    "dist"
+  ],
   "type": "module",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "dev": "vp dev",
     "build": "vp pack",
     "preview": "vp preview",
-    "prepare": "vp config"
+    "prepare": "vp config",
+    "check": "vp check",
+    "test": "vp test"
   },
   "dependencies": {
     "@clack/prompts": "^1.5.1",
