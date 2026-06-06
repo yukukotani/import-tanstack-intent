@@ -9,7 +9,12 @@
     "preview": "vp preview",
     "prepare": "vp config"
   },
+  "dependencies": {
+    "@tanstack/intent": "^0.0.41",
+    "gunshi": "0.32.0"
+  },
   "devDependencies": {
+    "@gunshi/docs": "0.32.0",
     "typescript": "~6.0.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@latest",
     "vite-plus": "latest"
