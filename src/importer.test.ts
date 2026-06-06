@@ -40,6 +40,7 @@ async function createIntentFixture(): Promise<string> {
 
   const packageRoot = join(cwd, "node_modules", "fake-intent-package");
   await mkdir(join(packageRoot, "skills", "core", "deep"), { recursive: true });
+  await mkdir(join(packageRoot, "skills", "react"), { recursive: true });
   await writeJson(join(packageRoot, "package.json"), {
     name: "fake-intent-package",
     version: "1.0.0",
@@ -58,6 +59,11 @@ async function createIntentFixture(): Promise<string> {
   await writeFile(
     join(packageRoot, "skills", "core", "deep", "SKILL.md"),
     `---\nname: core/deep\ndescription: Deep reference\ntype: sub-skill\n---\n\n# Deep Reference\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(packageRoot, "skills", "react", "SKILL.md"),
+    `---\nname: react\ndescription: React fixture skill\ntype: framework\nframework: react\n---\n\n# React Skill\n`,
     "utf8",
   );
 
@@ -95,7 +101,7 @@ describe("slugifySkillName", () => {
 });
 
 describe("createImportCandidates", () => {
-  it("keeps only core skills and attaches prefix-matched sub-skills", () => {
+  it("keeps all non-sub-skills and attaches prefix-matched sub-skills", () => {
     const list = minimalList([
       {
         description: "Core",
@@ -118,6 +124,16 @@ describe("createImportCandidates", () => {
         use: "pkg#core/sub",
       },
       {
+        description: "React sub",
+        packageName: "pkg",
+        packageRoot: "/tmp/pkg",
+        packageSource: "local",
+        packageVersion: "1.0.0",
+        skillName: "react/query",
+        type: "sub-skill",
+        use: "pkg#react/query",
+      },
+      {
         description: "Framework",
         framework: "react",
         packageName: "pkg",
@@ -136,10 +152,15 @@ describe("createImportCandidates", () => {
         skill: { use: "pkg#core" },
         subSkills: [{ use: "pkg#core/sub" }],
       },
+      {
+        destinationName: "react",
+        skill: { use: "pkg#react" },
+        subSkills: [{ use: "pkg#react/query" }],
+      },
     ]);
   });
 
-  it("fails when two core skills slug to the same destination", () => {
+  it("fails when two importable skills slug to the same destination", () => {
     const list = minimalList([
       {
         description: "One",
@@ -226,25 +247,35 @@ describe("importSelectedSkills", () => {
 });
 
 describe("listImportCandidates", () => {
-  it("uses @tanstack/intent/core discovery and maps sub-skills from a fixture package", async () => {
+  it("uses @tanstack/intent/core discovery and maps every non-sub-skill from a fixture package", async () => {
     const cwd = await createIntentFixture();
 
     const listed = listImportCandidates({ cwd });
 
-    expect(listed.candidates).toHaveLength(1);
-    expect(listed.candidates[0]).toMatchObject({
-      destinationName: "core",
-      skill: { skillName: "core", type: "core" },
-      subSkills: [{ skillName: "core/deep", type: "sub-skill" }],
-    });
+    expect(listed.candidates).toHaveLength(2);
+    expect(listed.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          destinationName: "core",
+          skill: expect.objectContaining({ skillName: "core", type: "core" }),
+          subSkills: [expect.objectContaining({ skillName: "core/deep", type: "sub-skill" })],
+        }),
+        expect.objectContaining({
+          destinationName: "react",
+          skill: expect.objectContaining({ skillName: "react", type: "framework" }),
+          subSkills: [],
+        }),
+      ]),
+    );
   });
 });
 
 describe("runImport", () => {
-  it("writes selected core skills and bundled sub-skill references", async () => {
+  it("writes selected importable skills and bundled sub-skill references", async () => {
     const cwd = await createIntentFixture();
     const listed = listImportCandidates({ cwd });
-    const selectedUse = listed.candidates[0]!.skill.use;
+    const selectedUse = listed.candidates.find((candidate) => candidate.skill.skillName === "core")!
+      .skill.use;
     await mkdir(join(cwd, ".agents", "skills", "core"), { recursive: true });
     await writeFile(join(cwd, ".agents", "skills", "core", "old.txt"), "old", "utf8");
 
@@ -261,7 +292,22 @@ describe("runImport", () => {
     expect(existsSync(join(cwd, ".agents", "skills", "core-deep", "SKILL.md"))).toBe(false);
   });
 
-  it("fails with diagnostics when no core skills are importable", async () => {
+  it("writes selected non-core skills as top-level skills", async () => {
+    const cwd = await createIntentFixture();
+    const listed = listImportCandidates({ cwd });
+    const selectedUse = listed.candidates.find(
+      (candidate) => candidate.skill.skillName === "react",
+    )!.skill.use;
+
+    const summary = await runImport({ cwd, selectedUses: [selectedUse] });
+
+    expect(summary).toMatchObject({ importedCount: 1, overwriteCount: 0 });
+    await expect(
+      readFile(join(cwd, ".agents", "skills", "react", "SKILL.md"), "utf8"),
+    ).resolves.toContain("# React Skill");
+  });
+
+  it("fails with diagnostics when no skills are importable", async () => {
     const resolveIntentSkillMock = vi.fn(() => resolvedSkill("core", "/tmp/unused/SKILL.md"));
     const api: IntentCoreApi = {
       listIntentSkills: vi.fn(
@@ -278,7 +324,7 @@ describe("runImport", () => {
     };
 
     await expect(runImport({ api, selectedUses: ["pkg#core"] })).rejects.toMatchObject({
-      code: "no-core-skills",
+      code: "no-importable-skills",
       message: expect.stringContaining("fixture warning"),
     });
     expect(resolveIntentSkillMock).not.toHaveBeenCalled();

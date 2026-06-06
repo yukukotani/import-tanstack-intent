@@ -74,7 +74,7 @@ describe("main", () => {
 });
 
 describe("runImportCommand", () => {
-  it("prints diagnostics and returns 1 when no core skills are available", async () => {
+  it("prints diagnostics and returns 1 when no skills are importable", async () => {
     const stdout = capture();
     const stderr = capture();
     const importSelectedSkills = vi.fn(async () => summary());
@@ -83,10 +83,8 @@ describe("runImportCommand", () => {
       loadImporter: vi.fn(
         async () =>
           ({
-            createNoCoreSkillsError: () =>
-              new Error(
-                "No importable TanStack Intent core skills were found.\n\nWarning: fixture",
-              ),
+            createNoImportableSkillsError: () =>
+              new Error("No importable TanStack Intent skills were found.\n\nWarning: fixture"),
             importSelectedSkills,
             listImportCandidates: () => ({
               candidates: [],
@@ -101,7 +99,7 @@ describe("runImportCommand", () => {
     };
 
     await expect(runImportCommand(deps)).resolves.toBe(1);
-    expect(stderr.chunks.join("")).toContain("No importable TanStack Intent core skills");
+    expect(stderr.chunks.join("")).toContain("No importable TanStack Intent skills");
     expect(importSelectedSkills).not.toHaveBeenCalled();
     expect(deps.loadSelection).not.toHaveBeenCalled();
   });
@@ -117,7 +115,7 @@ describe("runImportCommand", () => {
       loadImporter: vi.fn(
         async () =>
           ({
-            createNoCoreSkillsError: () => new Error("unused"),
+            createNoImportableSkillsError: () => new Error("unused"),
             importSelectedSkills,
             listImportCandidates: () => ({
               candidates: [selectedCandidate],

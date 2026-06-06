@@ -45,7 +45,7 @@ export interface ImportSummary {
 export type ImportTanStackIntentErrorCode =
   | "destination-collision"
   | "invalid-selection"
-  | "no-core-skills"
+  | "no-importable-skills"
   | "unsafe-skill-name";
 
 export class ImportTanStackIntentError extends Error {
@@ -63,12 +63,16 @@ export const defaultIntentCoreApi: IntentCoreApi = {
   resolveIntentSkill,
 };
 
+export function isSubSkill(skill: IntentSkillSummary): boolean {
+  return skill.type === "sub-skill";
+}
+
 export function isCoreSkill(skill: IntentSkillSummary): boolean {
   return skill.type === "core";
 }
 
-export function isSubSkill(skill: IntentSkillSummary): boolean {
-  return skill.type === "sub-skill";
+export function isImportableSkill(skill: IntentSkillSummary): boolean {
+  return !isSubSkill(skill);
 }
 
 export function slugifySkillName(skillName: string): string {
@@ -93,14 +97,14 @@ export function safeSlugForSkill(skillName: string): string {
 }
 
 export function findBundledSubSkills(
-  coreSkill: IntentSkillSummary,
+  parentSkill: IntentSkillSummary,
   allSkills: IntentSkillSummary[],
 ): IntentSkillSummary[] {
-  const prefix = `${coreSkill.skillName}/`;
+  const prefix = `${parentSkill.skillName}/`;
   return allSkills
     .filter(
       (skill) =>
-        skill.packageName === coreSkill.packageName &&
+        skill.packageName === parentSkill.packageName &&
         isSubSkill(skill) &&
         skill.skillName.startsWith(prefix),
     )
@@ -121,7 +125,7 @@ export function formatIntentDiagnostics(
 export function createImportCandidates(list: IntentSkillList): ImportCandidate[] {
   const seenDestinations = new Map<string, string>();
 
-  return list.skills.filter(isCoreSkill).map((skill) => {
+  return list.skills.filter(isImportableSkill).map((skill) => {
     const destinationName = safeSlugForSkill(skill.skillName);
     const previous = seenDestinations.get(destinationName);
     if (previous) {
@@ -140,14 +144,16 @@ export function createImportCandidates(list: IntentSkillList): ImportCandidate[]
   });
 }
 
-export function createNoCoreSkillsError(list: IntentSkillList): ImportTanStackIntentError {
+export function createNoImportableSkillsError(list: IntentSkillList): ImportTanStackIntentError {
   const diagnostics = formatIntentDiagnostics(list);
   const detail = diagnostics.length > 0 ? `\n\n${diagnostics.join("\n")}` : "";
   return new ImportTanStackIntentError(
-    "no-core-skills",
-    `No importable TanStack Intent core skills were found.${detail}`,
+    "no-importable-skills",
+    `No importable TanStack Intent skills were found.${detail}`,
   );
 }
+
+export const createNoCoreSkillsError = createNoImportableSkillsError;
 
 export function listImportCandidates(
   options: {
@@ -183,7 +189,7 @@ function assertKnownSelections(
     if (!candidate) {
       throw new ImportTanStackIntentError(
         "invalid-selection",
-        `Selected skill "${use}" is not an importable core skill.`,
+        `Selected skill "${use}" is not an importable TanStack Intent skill.`,
       );
     }
     selected.push(candidate);
@@ -353,7 +359,7 @@ export async function runImport(options: {
 }): Promise<ImportSummary> {
   const listed = listImportCandidates({ cwd: options.cwd, api: options.api });
   if (listed.candidates.length === 0) {
-    throw createNoCoreSkillsError(listed.list);
+    throw createNoImportableSkillsError(listed.list);
   }
   return importSelectedSkills({
     api: options.api,

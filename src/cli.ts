@@ -57,7 +57,7 @@ export async function runImportCommand(dependencies: CliDependencies = {}): Prom
   const listed = importer.listImportCandidates({ cwd });
 
   if (listed.candidates.length === 0) {
-    writeLine(io.stderr, pc.red(importer.createNoCoreSkillsError(listed.list).message));
+    writeLine(io.stderr, pc.red(importer.createNoImportableSkillsError(listed.list).message));
     return 1;
   }
 
@@ -100,7 +100,7 @@ function createCommand(dependencies: CliDependencies) {
   let commandExitCode = 0;
   const command = define({
     name: CLI_NAME,
-    description: "Import TanStack Intent core skills into .agents/skills.",
+    description: "Import TanStack Intent skills into .agents/skills.",
     examples: `${CLI_NAME}\n${CLI_NAME} --help`,
     run: async () => {
       commandExitCode = await runImportCommand(dependencies);
