@@ -25,7 +25,7 @@ export function toSelectableSkill(candidate: ImportCandidate): SelectableSkill {
   const hint = `${candidate.skill.packageName}@${candidate.skill.packageVersion}${subSkillHint}`;
   return {
     value: candidate.skill.use,
-    label: candidate.skill.skillName,
+    label: `${candidate.skill.skillName} [${candidate.skill.type}]`,
     hint,
   };
 }
