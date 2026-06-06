@@ -239,19 +239,8 @@ function rewriteBundledReferenceLinks(
   return rewritten;
 }
 
-function appendBundledReferencesSection(
-  content: string,
-  references: Array<{ skill: IntentSkillSummary; fileName: string }>,
-): string {
-  const normalized = content.endsWith("\n") ? content : `${content}\n`;
-  if (references.length === 0) return normalized;
-
-  const lines = references.map((reference) => {
-    const description = reference.skill.description ? ` — ${reference.skill.description}` : "";
-    return `- [${reference.skill.skillName}](references/${reference.fileName})${description}`;
-  });
-
-  return `${normalized}\n## Bundled TanStack Intent References\n\n${lines.join("\n")}\n`;
+function normalizeTrailingNewline(content: string): string {
+  return content.endsWith("\n") ? content : `${content}\n`;
 }
 
 function referenceMarkdown(loaded: RawIntentSkill): string {
@@ -303,9 +292,8 @@ async function writeCandidate(options: {
 
   await writeFile(
     join(destinationPath, "SKILL.md"),
-    appendBundledReferencesSection(
+    normalizeTrailingNewline(
       rewriteBundledReferenceLinks(core.content, candidate.skill, references),
-      references,
     ),
     "utf8",
   );

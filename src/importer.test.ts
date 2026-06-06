@@ -254,7 +254,7 @@ describe("runImport", () => {
     const skillPath = join(cwd, ".agents", "skills", "core", "SKILL.md");
     const referencePath = join(cwd, ".agents", "skills", "core", "references", "core-deep.md");
     const skillContent = await readFile(skillPath, "utf8");
-    expect(skillContent).toContain("## Bundled TanStack Intent References");
+    expect(skillContent).not.toContain("## Bundled TanStack Intent References");
     expect(skillContent).toContain("(references/core-deep.md)");
     await expect(readFile(referencePath, "utf8")).resolves.toContain("# Deep Reference");
     expect(existsSync(join(cwd, ".agents", "skills", "core", "old.txt"))).toBe(false);
