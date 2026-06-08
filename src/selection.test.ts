@@ -52,7 +52,7 @@ describe("selectImportCandidates", () => {
     const selectedCandidate = candidate();
     const agentPrompt: AgentMultiselectPrompt = async () => {
       calls.push("agents");
-      return ["claude-code", "codex"];
+      return ["claude-code"];
     };
     const skillPrompt: MultiselectPrompt = async () => {
       calls.push("skills");
@@ -64,9 +64,32 @@ describe("selectImportCandidates", () => {
     ).resolves.toEqual({
       cancelled: false,
       selectedUses: [selectedCandidate.skill.use],
-      targetAgents: ["claude-code", "codex"],
+      targetAgents: ["universal", "claude-code"],
     });
     expect(calls).toEqual(["skills", "agents"]);
+  });
+
+  it("offers only additional non-.agents/skills agents", async () => {
+    const selectedCandidate = candidate();
+    const agentPrompt: AgentMultiselectPrompt = async ({ options, required }) => {
+      expect(required).toBe(false);
+      expect(options.map((option) => option.value)).toContain("claude-code");
+      expect(options.map((option) => option.value)).not.toContain("codex");
+      expect(options.map((option) => option.value)).not.toContain("universal");
+      return [];
+    };
+
+    await expect(
+      selectImportCandidates({
+        candidates: [selectedCandidate],
+        agentPrompt,
+        skillPrompt: async () => [selectedCandidate.skill.use],
+      }),
+    ).resolves.toEqual({
+      cancelled: false,
+      selectedUses: [selectedCandidate.skill.use],
+      targetAgents: ["universal"],
+    });
   });
 
   it("cancels before agent selection when the skill prompt is cancelled", async () => {

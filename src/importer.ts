@@ -5,15 +5,26 @@ import {
   type IntentSkillSummary,
   type ResolvedIntentSkill,
 } from "@tanstack/intent/core";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join, resolve as resolvePath } from "node:path";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  readlink,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { platform } from "node:os";
+import { basename, dirname, join, relative, resolve as resolvePath } from "node:path";
 import {
   agents,
   defaultTargetAgents,
+  ensureCanonicalTargetAgents,
   resolveImportDestinations,
   type AgentType,
   type ImportDestination,
+  type ImportDestinationMode,
 } from "./agents.ts";
 
 export interface IntentCoreApi {
@@ -36,6 +47,7 @@ export interface ListedImportCandidates {
 export interface ImportedSkillDestinationSummary {
   agents: AgentType[];
   agentDisplayNames: string[];
+  mode: ImportDestinationMode;
   skillsRoot: string;
   destinationPath: string;
   overwritten: boolean;
@@ -216,13 +228,6 @@ function assertKnownSelections(
 
 function assertKnownTargetAgents(targetAgents: readonly string[]): AgentType[] {
   const uniqueAgents = [...new Set(targetAgents)];
-  if (uniqueAgents.length === 0) {
-    throw new ImportTanStackIntentError(
-      "invalid-selection",
-      "Select at least one target agent to import into.",
-    );
-  }
-
   const invalidAgents = uniqueAgents.filter((agent) => !Object.hasOwn(agents, agent));
   if (invalidAgents.length > 0) {
     throw new ImportTanStackIntentError(
@@ -231,7 +236,7 @@ function assertKnownTargetAgents(targetAgents: readonly string[]): AgentType[] {
     );
   }
 
-  return uniqueAgents as AgentType[];
+  return ensureCanonicalTargetAgents(uniqueAgents as AgentType[]);
 }
 
 function referenceFileName(skillName: string): string {
@@ -286,6 +291,67 @@ function normalizeTrailingNewline(content: string): string {
   return content.endsWith("\n") ? content : `${content}\n`;
 }
 
+function resolveSymlinkTarget(linkPath: string, linkTarget: string): string {
+  return resolvePath(dirname(linkPath), linkTarget);
+}
+
+async function resolveParentSymlinks(path: string): Promise<string> {
+  const resolved = resolvePath(path);
+  try {
+    return join(await realpath(dirname(resolved)), basename(resolved));
+  } catch {
+    return resolved;
+  }
+}
+
+async function pathExistsIncludingBrokenSymlink(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function createDestinationSymlink(target: string, linkPath: string): Promise<void> {
+  const resolvedTarget = resolvePath(target);
+  const resolvedLinkPath = resolvePath(linkPath);
+  const [realTarget, realLinkPath] = await Promise.all([
+    realpath(resolvedTarget).catch(() => resolvedTarget),
+    realpath(resolvedLinkPath).catch(() => resolvedLinkPath),
+  ]);
+
+  if (realTarget === realLinkPath) {
+    return;
+  }
+
+  if ((await resolveParentSymlinks(target)) === (await resolveParentSymlinks(linkPath))) {
+    return;
+  }
+
+  try {
+    const stats = await lstat(linkPath);
+    if (stats.isSymbolicLink()) {
+      const currentTarget = resolveSymlinkTarget(linkPath, await readlink(linkPath));
+      if (currentTarget === resolvedTarget) {
+        return;
+      }
+    }
+    await rm(linkPath, { force: true, recursive: true });
+  } catch {
+    await rm(linkPath, { force: true });
+  }
+
+  const linkDir = dirname(linkPath);
+  await mkdir(linkDir, { recursive: true });
+  const realLinkDir = await resolveParentSymlinks(linkDir);
+  await symlink(
+    relative(realLinkDir, target),
+    linkPath,
+    platform() === "win32" ? "junction" : null,
+  );
+}
+
 function referenceMarkdown(loaded: RawIntentSkill): string {
   const content = loaded.content.endsWith("\n") ? loaded.content : `${loaded.content}\n`;
   return `<!-- Imported from TanStack Intent: ${loaded.packageName}#${loaded.skillName} -->\n\n${content}`;
@@ -333,10 +399,7 @@ async function writeCandidate(options: {
   );
   const destinationSummaries: ImportedSkillDestinationSummary[] = [];
 
-  for (const destination of destinations) {
-    const destinationPath = join(cwd, destination.skillsRoot, destinationName);
-    const overwritten = existsSync(destinationPath);
-
+  async function writeCanonicalSkillDirectory(destinationPath: string): Promise<void> {
     await rm(destinationPath, { force: true, recursive: true });
     await mkdir(destinationPath, { recursive: true });
     await writeFile(join(destinationPath, "SKILL.md"), skillContent, "utf8");
@@ -354,10 +417,42 @@ async function writeCandidate(options: {
         ),
       );
     }
+  }
+
+  const canonicalDestination = destinations.find((destination) => destination.mode === "canonical");
+  if (!canonicalDestination) {
+    throw new ImportTanStackIntentError(
+      "invalid-selection",
+      "The canonical .agents/skills destination could not be resolved.",
+    );
+  }
+
+  const canonicalPath = join(cwd, canonicalDestination.skillsRoot, destinationName);
+  const canonicalOverwritten = await pathExistsIncludingBrokenSymlink(canonicalPath);
+  await writeCanonicalSkillDirectory(canonicalPath);
+
+  destinationSummaries.push({
+    agents: canonicalDestination.agents,
+    agentDisplayNames: canonicalDestination.displayNames,
+    mode: canonicalDestination.mode,
+    skillsRoot: canonicalDestination.skillsRoot,
+    destinationPath: canonicalPath,
+    overwritten: canonicalOverwritten,
+  });
+
+  for (const destination of destinations) {
+    if (destination.mode === "canonical") {
+      continue;
+    }
+
+    const destinationPath = join(cwd, destination.skillsRoot, destinationName);
+    const overwritten = await pathExistsIncludingBrokenSymlink(destinationPath);
+    await createDestinationSymlink(canonicalPath, destinationPath);
 
     destinationSummaries.push({
       agents: destination.agents,
       agentDisplayNames: destination.displayNames,
+      mode: destination.mode,
       skillsRoot: destination.skillsRoot,
       destinationPath,
       overwritten,

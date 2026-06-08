@@ -1,8 +1,8 @@
 import type { IntentSkillList, ResolvedIntentSkill } from "@tanstack/intent/core";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { AgentType } from "./agents.ts";
 import {
@@ -25,6 +25,13 @@ afterEach(async () => {
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function expectSymlinkTo(linkPath: string, targetPath: string): Promise<void> {
+  await expect(lstat(linkPath).then((stats) => stats.isSymbolicLink())).resolves.toBe(true);
+  await expect(
+    readlink(linkPath).then((target) => resolve(dirname(linkPath), target)),
+  ).resolves.toBe(targetPath);
 }
 
 async function createIntentFixture(): Promise<string> {
@@ -252,7 +259,7 @@ describe("importSelectedSkills", () => {
     expect(existsSync(join(cwd, ".agents", "outside", "SKILL.md"))).toBe(false);
   });
 
-  it("writes to Claude Code skills when claude-code is selected", async () => {
+  it("writes canonical .agents/skills and symlinks Claude Code when claude-code is selected", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "import-tanstack-intent-"));
     temporaryRoots.push(cwd);
     const selected = createImportCandidates(
@@ -286,18 +293,29 @@ describe("importSelectedSkills", () => {
       targetAgents: ["claude-code"],
     });
 
-    expect(result).toMatchObject({ importedCount: 1, destinationCount: 1, overwriteCount: 0 });
+    expect(result).toMatchObject({ importedCount: 1, destinationCount: 2, overwriteCount: 0 });
     expect(result.skills[0]).toMatchObject({
-      destinationPath: join(cwd, ".claude", "skills", "core"),
+      destinationPath: join(cwd, ".agents", "skills", "core"),
       overwritten: false,
     });
     expect(result.skills[0]?.destinations?.[0]).toMatchObject({
+      agents: ["universal"],
+      agentDisplayNames: ["Universal"],
+      mode: "canonical",
+      skillsRoot: ".agents/skills",
+    });
+    expect(result.skills[0]?.destinations?.[1]).toMatchObject({
       agents: ["claude-code"],
       agentDisplayNames: ["Claude Code"],
+      mode: "symlink",
       skillsRoot: ".claude/skills",
     });
+    expect(existsSync(join(cwd, ".agents", "skills", "core", "SKILL.md"))).toBe(true);
     expect(existsSync(join(cwd, ".claude", "skills", "core", "SKILL.md"))).toBe(true);
-    expect(existsSync(join(cwd, ".agents", "skills", "core", "SKILL.md"))).toBe(false);
+    await expectSymlinkTo(
+      join(cwd, ".claude", "skills", "core"),
+      join(cwd, ".agents", "skills", "core"),
+    );
   });
 });
 
@@ -359,6 +377,10 @@ describe("runImport", () => {
     ).resolves.toContain("# Deep Reference");
     expect(existsSync(join(cwd, ".claude", "skills", "core", "old.txt"))).toBe(false);
     expect(existsSync(join(cwd, ".claude", "skills", "core-deep", "SKILL.md"))).toBe(false);
+    await expectSymlinkTo(
+      join(cwd, ".claude", "skills", "core"),
+      join(cwd, ".agents", "skills", "core"),
+    );
     expect(
       summary.skills[0]?.destinations?.map((destination) => destination.skillsRoot).sort(),
     ).toEqual([".agents/skills", ".claude/skills"]);
@@ -366,7 +388,7 @@ describe("runImport", () => {
       summary.skills[0]?.destinations?.find(
         (destination) => destination.skillsRoot === ".agents/skills",
       )?.agents,
-    ).toEqual(["codex", "cursor"]);
+    ).toEqual(["universal", "codex", "cursor"]);
   });
 
   it("writes selected non-core skills as top-level skills", async () => {
@@ -420,18 +442,23 @@ describe("runImport", () => {
     expect(existsSync(join(cwd, ".agents", "skills", "core", "SKILL.md"))).toBe(false);
   });
 
-  it("rejects empty target-agent selections before writing", async () => {
+  it("treats empty target-agent selections as canonical .agents/skills only", async () => {
     const cwd = await createIntentFixture();
     const listed = listImportCandidates({ cwd });
     const selectedUse = listed.candidates[0]!.skill.use;
 
     await expect(
       runImport({ cwd, selectedUses: [selectedUse], targetAgents: [] }),
-    ).rejects.toMatchObject({
-      code: "invalid-selection",
-      message: expect.stringContaining("Select at least one target agent"),
+    ).resolves.toMatchObject({
+      importedCount: 1,
+      destinationCount: 1,
+      skills: [
+        {
+          destinations: [expect.objectContaining({ agents: ["universal"] })],
+        },
+      ],
     });
-    expect(existsSync(join(cwd, ".agents", "skills", "core", "SKILL.md"))).toBe(false);
+    expect(existsSync(join(cwd, ".agents", "skills", "core", "SKILL.md"))).toBe(true);
   });
 
   it("fails with diagnostics when no skills are importable", async () => {
