@@ -22,10 +22,11 @@ The command will:
 
 1. Discover importable TanStack Intent skills in the current project.
 2. Show an interactive multi-select prompt for the skills to import.
-3. Ask which target agents should receive the imported skills.
-4. Write the selected skills to each chosen agent’s configured project-local skills directory, such as `.agents/skills/<skill-name>/SKILL.md` or `.claude/skills/<skill-name>/SKILL.md`.
-5. Overwrite existing imported skill directories when the same destination is selected again.
+3. Always enable the universal `.agents/skills` destination, then ask which additional agent-specific directories should symlink to it.
+4. Write the selected skills once to `.agents/skills/<skill-name>/SKILL.md`.
+5. Create symbolic links for any additional selected agents, such as `.claude/skills/<skill-name> -> .agents/skills/<skill-name>`.
+6. Overwrite existing imported skill directories or links when the same destination is selected again.
 
-Multiple selected agents may share the same skills directory. In that case, the importer writes that directory once and reports the shared destination with all matching agent names.
+Agents that natively read `.agents/skills` are enabled by default and are not shown as additional targets. Additional agents keep their normal skill paths while sharing the canonical `.agents/skills` copy through symlinks.
 
 After importing, your selected agents can load the skills using their normal skills discovery flow.

@@ -57,6 +57,7 @@ function summary(): ImportSummary {
             agentDisplayNames: ["Claude Code"],
             agents: ["claude-code"],
             destinationPath: "/tmp/project/.claude/skills/core",
+            mode: "symlink",
             overwritten: false,
             skillsRoot: ".claude/skills",
           },
@@ -64,6 +65,7 @@ function summary(): ImportSummary {
             agentDisplayNames: ["Codex", "Cursor"],
             agents: ["codex", "cursor"],
             destinationPath: "/tmp/project/.agents/skills/core",
+            mode: "canonical",
             overwritten: true,
             skillsRoot: ".agents/skills",
           },
@@ -147,7 +149,7 @@ describe("runImportCommand", () => {
             selectImportCandidates: vi.fn(async () => ({
               cancelled: false,
               selectedUses: [selectedCandidate.skill.use],
-              targetAgents: ["claude-code", "codex", "cursor"],
+              targetAgents: ["universal", "claude-code"],
             })),
           }) as never,
       ),
@@ -159,7 +161,7 @@ describe("runImportCommand", () => {
       cwd: "/tmp/project",
       diagnostics: [],
       selectedUses: [selectedCandidate.skill.use],
-      targetAgents: ["claude-code", "codex", "cursor"],
+      targetAgents: ["universal", "claude-code"],
     });
     expect(stdout.chunks.join("")).toContain("Imported 1 skill to 2 destinations.");
     expect(stdout.chunks.join("")).toContain(".claude/skills/core [Claude Code]");

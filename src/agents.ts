@@ -3,6 +3,8 @@ export interface AgentConfig {
   skillsDir: string;
 }
 
+export type ImportDestinationMode = "canonical" | "symlink";
+
 export const agents = {
   "aider-desk": { displayName: "AiderDesk", skillsDir: ".aider-desk/skills" },
   amp: { displayName: "Amp", skillsDir: ".agents/skills" },
@@ -79,9 +81,12 @@ export const agents = {
 
 export type AgentType = keyof typeof agents;
 
+export const canonicalSkillsRoot = ".agents/skills";
+
 export interface ImportDestination {
   agents: AgentType[];
   displayNames: string[];
+  mode: ImportDestinationMode;
   skillsRoot: string;
 }
 
@@ -91,13 +96,49 @@ export function isAgentType(value: string): value is AgentType {
   return Object.hasOwn(agents, value);
 }
 
+export function isUniversalAgent(agent: AgentType): boolean {
+  return agents[agent].skillsDir === canonicalSkillsRoot;
+}
+
+export function getUniversalAgentTypes(): AgentType[] {
+  return (Object.keys(agents) as AgentType[]).filter(isUniversalAgent);
+}
+
+export function getAdditionalAgentTypes(): AgentType[] {
+  return (Object.keys(agents) as AgentType[]).filter((agent) => !isUniversalAgent(agent));
+}
+
+export function ensureCanonicalTargetAgents(targetAgents: readonly AgentType[]): AgentType[] {
+  const result: AgentType[] = [];
+  for (const agent of [...defaultTargetAgents, ...targetAgents]) {
+    if (!result.includes(agent)) {
+      result.push(agent);
+    }
+  }
+  return result;
+}
+
 export function resolveImportDestinations(
   targetAgents: readonly AgentType[] = defaultTargetAgents,
 ): ImportDestination[] {
+  const normalizedTargetAgents = ensureCanonicalTargetAgents(targetAgents);
+  const canonicalAgents = normalizedTargetAgents.filter(isUniversalAgent);
+  const destinations: ImportDestination[] = [
+    {
+      agents: canonicalAgents,
+      displayNames: canonicalAgents.map((agent) => agents[agent].displayName),
+      mode: "canonical",
+      skillsRoot: canonicalSkillsRoot,
+    },
+  ];
   const bySkillsRoot = new Map<string, ImportDestination>();
 
-  for (const agent of targetAgents) {
+  for (const agent of normalizedTargetAgents) {
     const config = agents[agent];
+    if (config.skillsDir === canonicalSkillsRoot) {
+      continue;
+    }
+
     const existing = bySkillsRoot.get(config.skillsDir);
     if (existing) {
       existing.agents.push(agent);
@@ -108,9 +149,10 @@ export function resolveImportDestinations(
     bySkillsRoot.set(config.skillsDir, {
       agents: [agent],
       displayNames: [config.displayName],
+      mode: "symlink",
       skillsRoot: config.skillsDir,
     });
   }
 
-  return [...bySkillsRoot.values()];
+  return [...destinations, ...bySkillsRoot.values()];
 }

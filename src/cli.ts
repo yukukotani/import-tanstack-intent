@@ -105,13 +105,21 @@ export async function runImportCommand(dependencies: CliDependencies = {}): Prom
         agentDisplayNames: [],
         agents: [],
         destinationPath: skill.destinationPath,
+        mode: "canonical",
         overwritten: skill.overwritten,
         skillsRoot: ".agents/skills",
       },
     ];
 
     for (const destination of destinations) {
-      const status = destination.overwritten ? "overwritten" : "new";
+      const status =
+        destination.mode === "symlink"
+          ? destination.overwritten
+            ? "symlink, overwritten"
+            : "symlink"
+          : destination.overwritten
+            ? "overwritten"
+            : "new";
       const agentSuffix =
         destination.agentDisplayNames.length > 0
           ? ` [${formatAgentList(destination.agentDisplayNames)}]`

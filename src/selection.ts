@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { agents, type AgentType } from "./agents.ts";
+import { agents, defaultTargetAgents, getAdditionalAgentTypes, type AgentType } from "./agents.ts";
 import type { ImportCandidate } from "./importer.ts";
 
 export interface SelectableSkill {
@@ -100,16 +100,17 @@ export async function selectImportCandidates(options: {
     return { cancelled: true, selectedUses: [], targetAgents: [] };
   }
 
-  const agentChoices = sortAgentTypes(Object.keys(agents) as AgentType[]).map(toSelectableAgent);
-  const selectedAgents = await agentPrompt({
-    message: "Select target agents to import into",
+  const agentChoices = sortAgentTypes(getAdditionalAgentTypes()).map(toSelectableAgent);
+  const selectedAdditionalAgents = await agentPrompt({
+    message: "Select additional agents to symlink from .agents/skills",
     options: agentChoices,
-    required: true,
+    required: false,
   });
 
-  if (isPromptCancel(selectedAgents)) {
+  if (isPromptCancel(selectedAdditionalAgents)) {
     return { cancelled: true, selectedUses: [], targetAgents: [] };
   }
 
-  return { cancelled: false, selectedUses: selected, targetAgents: selectedAgents };
+  const targetAgents = [...new Set([...defaultTargetAgents, ...selectedAdditionalAgents])];
+  return { cancelled: false, selectedUses: selected, targetAgents };
 }
