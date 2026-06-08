@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import type { AgentType } from "./agents.ts";
 import {
   ImportTanStackIntentError,
   createImportCandidates,
@@ -241,8 +242,62 @@ describe("importSelectedSkills", () => {
     });
 
     expect(result.skills[0]?.destinationName).toBe("core");
+    expect(result.skills[0]?.destinations).toEqual([
+      expect.objectContaining({
+        agents: ["universal"],
+        skillsRoot: ".agents/skills",
+      }),
+    ]);
     expect(existsSync(join(cwd, ".agents", "skills", "core", "SKILL.md"))).toBe(true);
     expect(existsSync(join(cwd, ".agents", "outside", "SKILL.md"))).toBe(false);
+  });
+
+  it("writes to Claude Code skills when claude-code is selected", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "import-tanstack-intent-"));
+    temporaryRoots.push(cwd);
+    const selected = createImportCandidates(
+      minimalList([
+        {
+          description: "Core",
+          packageName: "pkg",
+          packageRoot: "/tmp/pkg",
+          packageSource: "local",
+          packageVersion: "1.0.0",
+          skillName: "core",
+          type: "core",
+          use: "pkg#core",
+        },
+      ]),
+    )[0]!;
+    const sourceDir = join(cwd, "source", "core");
+    const sourcePath = join(sourceDir, "SKILL.md");
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(sourcePath, "# Core", "utf8");
+    const api: IntentCoreApi = {
+      listIntentSkills: vi.fn(() => minimalList([])),
+      resolveIntentSkill: vi.fn(() => resolvedSkill("core", sourcePath)),
+    };
+
+    const result = await importSelectedSkills({
+      api,
+      candidates: [selected],
+      cwd,
+      selectedUses: [selected.skill.use],
+      targetAgents: ["claude-code"],
+    });
+
+    expect(result).toMatchObject({ importedCount: 1, destinationCount: 1, overwriteCount: 0 });
+    expect(result.skills[0]).toMatchObject({
+      destinationPath: join(cwd, ".claude", "skills", "core"),
+      overwritten: false,
+    });
+    expect(result.skills[0]?.destinations?.[0]).toMatchObject({
+      agents: ["claude-code"],
+      agentDisplayNames: ["Claude Code"],
+      skillsRoot: ".claude/skills",
+    });
+    expect(existsSync(join(cwd, ".claude", "skills", "core", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(cwd, ".agents", "skills", "core", "SKILL.md"))).toBe(false);
   });
 });
 
@@ -277,11 +332,17 @@ describe("runImport", () => {
     const selectedUse = listed.candidates.find((candidate) => candidate.skill.skillName === "core")!
       .skill.use;
     await mkdir(join(cwd, ".agents", "skills", "core"), { recursive: true });
+    await mkdir(join(cwd, ".claude", "skills", "core"), { recursive: true });
     await writeFile(join(cwd, ".agents", "skills", "core", "old.txt"), "old", "utf8");
+    await writeFile(join(cwd, ".claude", "skills", "core", "old.txt"), "old", "utf8");
 
-    const summary = await runImport({ cwd, selectedUses: [selectedUse] });
+    const summary = await runImport({
+      cwd,
+      selectedUses: [selectedUse],
+      targetAgents: ["claude-code", "codex", "cursor"],
+    });
 
-    expect(summary).toMatchObject({ importedCount: 1, overwriteCount: 1 });
+    expect(summary).toMatchObject({ importedCount: 1, destinationCount: 2, overwriteCount: 2 });
     const skillPath = join(cwd, ".agents", "skills", "core", "SKILL.md");
     const referencePath = join(cwd, ".agents", "skills", "core", "references", "core-deep.md");
     const skillContent = await readFile(skillPath, "utf8");
@@ -290,6 +351,22 @@ describe("runImport", () => {
     await expect(readFile(referencePath, "utf8")).resolves.toContain("# Deep Reference");
     expect(existsSync(join(cwd, ".agents", "skills", "core", "old.txt"))).toBe(false);
     expect(existsSync(join(cwd, ".agents", "skills", "core-deep", "SKILL.md"))).toBe(false);
+    await expect(
+      readFile(join(cwd, ".claude", "skills", "core", "SKILL.md"), "utf8"),
+    ).resolves.toContain("(references/core-deep.md)");
+    await expect(
+      readFile(join(cwd, ".claude", "skills", "core", "references", "core-deep.md"), "utf8"),
+    ).resolves.toContain("# Deep Reference");
+    expect(existsSync(join(cwd, ".claude", "skills", "core", "old.txt"))).toBe(false);
+    expect(existsSync(join(cwd, ".claude", "skills", "core-deep", "SKILL.md"))).toBe(false);
+    expect(
+      summary.skills[0]?.destinations?.map((destination) => destination.skillsRoot).sort(),
+    ).toEqual([".agents/skills", ".claude/skills"]);
+    expect(
+      summary.skills[0]?.destinations?.find(
+        (destination) => destination.skillsRoot === ".agents/skills",
+      )?.agents,
+    ).toEqual(["codex", "cursor"]);
   });
 
   it("writes selected non-core skills as top-level skills", async () => {
@@ -299,12 +376,62 @@ describe("runImport", () => {
       (candidate) => candidate.skill.skillName === "react",
     )!.skill.use;
 
-    const summary = await runImport({ cwd, selectedUses: [selectedUse] });
+    const summary = await runImport({
+      cwd,
+      selectedUses: [selectedUse],
+      targetAgents: ["universal"],
+    });
 
     expect(summary).toMatchObject({ importedCount: 1, overwriteCount: 0 });
     await expect(
       readFile(join(cwd, ".agents", "skills", "react", "SKILL.md"), "utf8"),
     ).resolves.toContain("# React Skill");
+  });
+
+  it("defaults to the universal .agents/skills target", async () => {
+    const cwd = await createIntentFixture();
+    const listed = listImportCandidates({ cwd });
+    const selectedUse = listed.candidates.find(
+      (candidate) => candidate.skill.skillName === "react",
+    )!.skill.use;
+
+    const summary = await runImport({ cwd, selectedUses: [selectedUse] });
+
+    expect(summary).toMatchObject({ importedCount: 1, destinationCount: 1, overwriteCount: 0 });
+    expect(summary.skills[0]?.destinations).toEqual([
+      expect.objectContaining({ agents: ["universal"], skillsRoot: ".agents/skills" }),
+    ]);
+    await expect(
+      readFile(join(cwd, ".agents", "skills", "react", "SKILL.md"), "utf8"),
+    ).resolves.toContain("# React Skill");
+  });
+
+  it("rejects unknown target agents before writing", async () => {
+    const cwd = await createIntentFixture();
+    const listed = listImportCandidates({ cwd });
+    const selectedUse = listed.candidates[0]!.skill.use;
+
+    await expect(
+      runImport({ cwd, selectedUses: [selectedUse], targetAgents: ["missing-agent" as AgentType] }),
+    ).rejects.toMatchObject({
+      code: "invalid-selection",
+      message: expect.stringContaining("Unknown target agent"),
+    });
+    expect(existsSync(join(cwd, ".agents", "skills", "core", "SKILL.md"))).toBe(false);
+  });
+
+  it("rejects empty target-agent selections before writing", async () => {
+    const cwd = await createIntentFixture();
+    const listed = listImportCandidates({ cwd });
+    const selectedUse = listed.candidates[0]!.skill.use;
+
+    await expect(
+      runImport({ cwd, selectedUses: [selectedUse], targetAgents: [] }),
+    ).rejects.toMatchObject({
+      code: "invalid-selection",
+      message: expect.stringContaining("Select at least one target agent"),
+    });
+    expect(existsSync(join(cwd, ".agents", "skills", "core", "SKILL.md"))).toBe(false);
   });
 
   it("fails with diagnostics when no skills are importable", async () => {

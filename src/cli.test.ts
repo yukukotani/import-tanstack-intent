@@ -45,13 +45,30 @@ function candidate(): ImportCandidate {
 function summary(): ImportSummary {
   return {
     diagnostics: [],
+    destinationCount: 2,
     importedCount: 1,
-    overwriteCount: 0,
+    overwriteCount: 1,
     skills: [
       {
         destinationName: "core",
-        destinationPath: "/tmp/project/.agents/skills/core",
-        overwritten: false,
+        destinationPath: "/tmp/project/.claude/skills/core",
+        destinations: [
+          {
+            agentDisplayNames: ["Claude Code"],
+            agents: ["claude-code"],
+            destinationPath: "/tmp/project/.claude/skills/core",
+            overwritten: false,
+            skillsRoot: ".claude/skills",
+          },
+          {
+            agentDisplayNames: ["Codex", "Cursor"],
+            agents: ["codex", "cursor"],
+            destinationPath: "/tmp/project/.agents/skills/core",
+            overwritten: true,
+            skillsRoot: ".agents/skills",
+          },
+        ],
+        overwritten: true,
         referenceCount: 0,
         skillName: "core",
         use: "fake-intent-package#core",
@@ -130,6 +147,7 @@ describe("runImportCommand", () => {
             selectImportCandidates: vi.fn(async () => ({
               cancelled: false,
               selectedUses: [selectedCandidate.skill.use],
+              targetAgents: ["claude-code", "codex", "cursor"],
             })),
           }) as never,
       ),
@@ -141,8 +159,47 @@ describe("runImportCommand", () => {
       cwd: "/tmp/project",
       diagnostics: [],
       selectedUses: [selectedCandidate.skill.use],
+      targetAgents: ["claude-code", "codex", "cursor"],
     });
-    expect(stdout.chunks.join("")).toContain("Imported 1 skill.");
-    expect(stdout.chunks.join("")).toContain(".agents/skills/core");
+    expect(stdout.chunks.join("")).toContain("Imported 1 skill to 2 destinations.");
+    expect(stdout.chunks.join("")).toContain(".claude/skills/core [Claude Code]");
+    expect(stdout.chunks.join("")).toContain(".agents/skills/core [Codex, Cursor]");
+  });
+
+  it("returns 0 without importing when target-agent selection is cancelled", async () => {
+    const stdout = capture();
+    const stderr = capture();
+    const selectedCandidate = candidate();
+    const importSelectedSkills = vi.fn(async () => summary());
+    const deps: CliDependencies = {
+      cwd: "/tmp/project",
+      io: { stderr, stdout },
+      loadImporter: vi.fn(
+        async () =>
+          ({
+            createNoImportableSkillsError: () => new Error("unused"),
+            importSelectedSkills,
+            listImportCandidates: () => ({
+              candidates: [selectedCandidate],
+              diagnostics: [],
+              list: minimalList(),
+            }),
+          }) as never,
+      ),
+      loadSelection: vi.fn(
+        async () =>
+          ({
+            selectImportCandidates: vi.fn(async () => ({
+              cancelled: true,
+              selectedUses: [],
+              targetAgents: [],
+            })),
+          }) as never,
+      ),
+    };
+
+    await expect(runImportCommand(deps)).resolves.toBe(0);
+    expect(stderr.chunks.join("")).toContain("Import cancelled.");
+    expect(importSelectedSkills).not.toHaveBeenCalled();
   });
 });

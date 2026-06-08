@@ -50,6 +50,14 @@ function formatSkillCount(count: number): string {
   return `${count} skill${count === 1 ? "" : "s"}`;
 }
 
+function formatDestinationCount(count: number): string {
+  return `${count} destination${count === 1 ? "" : "s"}`;
+}
+
+function formatAgentList(displayNames: string[]): string {
+  return displayNames.join(", ");
+}
+
 export async function runImportCommand(dependencies: CliDependencies = {}): Promise<number> {
   const cwd = dependencies.cwd ?? process.cwd();
   const io = dependencies.io ?? defaultIo();
@@ -78,19 +86,41 @@ export async function runImportCommand(dependencies: CliDependencies = {}): Prom
     cwd,
     diagnostics: listed.diagnostics,
     selectedUses: selected.selectedUses,
+    targetAgents: selected.targetAgents,
   });
 
-  writeLine(io.stdout, pc.green(`Imported ${formatSkillCount(summary.importedCount)}.`));
-  writeLine(io.stdout, "Destination root: .agents/skills");
+  const destinationCount = summary.destinationCount ?? 1;
+  writeLine(
+    io.stdout,
+    pc.green(
+      `Imported ${formatSkillCount(summary.importedCount)} to ${formatDestinationCount(destinationCount)}.`,
+    ),
+  );
   writeLine(io.stdout, `Overwritten: ${summary.overwriteCount}`);
   for (const skill of summary.skills) {
     const references =
       skill.referenceCount === 1 ? "1 reference" : `${skill.referenceCount} references`;
-    const status = skill.overwritten ? "overwritten" : "new";
-    writeLine(
-      io.stdout,
-      `- ${skill.skillName} -> .agents/skills/${skill.destinationName} (${references}, ${status})`,
-    );
+    const destinations = skill.destinations ?? [
+      {
+        agentDisplayNames: [],
+        agents: [],
+        destinationPath: skill.destinationPath,
+        overwritten: skill.overwritten,
+        skillsRoot: ".agents/skills",
+      },
+    ];
+
+    for (const destination of destinations) {
+      const status = destination.overwritten ? "overwritten" : "new";
+      const agentSuffix =
+        destination.agentDisplayNames.length > 0
+          ? ` [${formatAgentList(destination.agentDisplayNames)}]`
+          : "";
+      writeLine(
+        io.stdout,
+        `- ${skill.skillName} -> ${destination.skillsRoot}/${skill.destinationName}${agentSuffix} (${references}, ${status})`,
+      );
+    }
   }
 
   return 0;
@@ -100,7 +130,7 @@ function createCommand(dependencies: CliDependencies) {
   let commandExitCode = 0;
   const command = define({
     name: CLI_NAME,
-    description: "Import TanStack Intent skills into .agents/skills.",
+    description: "Import TanStack Intent skills into selected agent skills directories.",
     examples: `${CLI_NAME}\n${CLI_NAME} --help`,
     run: async () => {
       commandExitCode = await runImportCommand(dependencies);
