@@ -89,17 +89,6 @@ export async function selectImportCandidates(options: {
 }): Promise<SelectImportCandidatesResult> {
   const skillPrompt = options.skillPrompt ?? options.prompt ?? defaultMultiselectPrompt;
   const agentPrompt = options.agentPrompt ?? defaultAgentMultiselectPrompt;
-  const agentChoices = sortAgentTypes(Object.keys(agents) as AgentType[]).map(toSelectableAgent);
-  const selectedAgents = await agentPrompt({
-    message: "Select target agents to import into",
-    options: agentChoices,
-    required: true,
-  });
-
-  if (isPromptCancel(selectedAgents)) {
-    return { cancelled: true, selectedUses: [], targetAgents: [] };
-  }
-
   const choices = sortImportCandidates(options.candidates).map(toSelectableSkill);
   const selected = await skillPrompt({
     message: "Select TanStack Intent skills to import",
@@ -108,6 +97,17 @@ export async function selectImportCandidates(options: {
   });
 
   if (isPromptCancel(selected)) {
+    return { cancelled: true, selectedUses: [], targetAgents: [] };
+  }
+
+  const agentChoices = sortAgentTypes(Object.keys(agents) as AgentType[]).map(toSelectableAgent);
+  const selectedAgents = await agentPrompt({
+    message: "Select target agents to import into",
+    options: agentChoices,
+    required: true,
+  });
+
+  if (isPromptCancel(selectedAgents)) {
     return { cancelled: true, selectedUses: [], targetAgents: [] };
   }
 

@@ -47,7 +47,7 @@ describe("toSelectableAgent", () => {
 });
 
 describe("selectImportCandidates", () => {
-  it("prompts for agents before prompting for skills", async () => {
+  it("prompts for skills before prompting for agents", async () => {
     const calls: string[] = [];
     const selectedCandidate = candidate();
     const agentPrompt: AgentMultiselectPrompt = async () => {
@@ -66,20 +66,33 @@ describe("selectImportCandidates", () => {
       selectedUses: [selectedCandidate.skill.use],
       targetAgents: ["claude-code", "codex"],
     });
-    expect(calls).toEqual(["agents", "skills"]);
+    expect(calls).toEqual(["skills", "agents"]);
   });
 
-  it("cancels before skill selection when the target-agent prompt is cancelled", async () => {
+  it("cancels before agent selection when the skill prompt is cancelled", async () => {
     const cancel = Symbol("cancel");
-    const skillPrompt = vi.fn<MultiselectPrompt>();
+    const agentPrompt = vi.fn<AgentMultiselectPrompt>();
 
     await expect(
       selectImportCandidates({
         candidates: [candidate()],
-        agentPrompt: async () => cancel,
-        skillPrompt,
+        agentPrompt,
+        skillPrompt: async () => cancel,
       }),
     ).resolves.toEqual({ cancelled: true, selectedUses: [], targetAgents: [] });
-    expect(skillPrompt).not.toHaveBeenCalled();
+    expect(agentPrompt).not.toHaveBeenCalled();
+  });
+
+  it("cancels after skill selection when the target-agent prompt is cancelled", async () => {
+    const cancel = Symbol("cancel");
+    const selectedCandidate = candidate();
+
+    await expect(
+      selectImportCandidates({
+        candidates: [selectedCandidate],
+        agentPrompt: async () => cancel,
+        skillPrompt: async () => [selectedCandidate.skill.use],
+      }),
+    ).resolves.toEqual({ cancelled: true, selectedUses: [], targetAgents: [] });
   });
 });
