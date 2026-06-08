@@ -21,8 +21,8 @@ npx import-tanstack-intent
 The command will:
 
 1. Discover importable TanStack Intent skills in the current project.
-2. Ask which target agents should receive the imported skills.
-3. Show an interactive multi-select prompt for the skills to import.
+2. Show an interactive multi-select prompt for the skills to import.
+3. Ask which target agents should receive the imported skills.
 4. Write the selected skills to each chosen agent’s configured project-local skills directory, such as `.agents/skills/<skill-name>/SKILL.md` or `.claude/skills/<skill-name>/SKILL.md`.
 5. Overwrite existing imported skill directories when the same destination is selected again.
 
