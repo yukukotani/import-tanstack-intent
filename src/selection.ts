@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
+import { agents, type AgentType } from "./agents.ts";
 import type { ImportCandidate } from "./importer.ts";
 
 export interface SelectableSkill {
@@ -8,9 +9,16 @@ export interface SelectableSkill {
   hint?: string;
 }
 
+export interface SelectableAgent {
+  value: AgentType;
+  label: string;
+  hint?: string;
+}
+
 export interface SelectImportCandidatesResult {
   cancelled: boolean;
   selectedUses: string[];
+  targetAgents: AgentType[];
 }
 
 export type MultiselectPrompt = (options: {
@@ -19,20 +27,41 @@ export type MultiselectPrompt = (options: {
   required: boolean;
 }) => Promise<string[] | symbol>;
 
+export type AgentMultiselectPrompt = (options: {
+  message: string;
+  options: SelectableAgent[];
+  required: boolean;
+}) => Promise<AgentType[] | symbol>;
+
 export function toSelectableSkill(candidate: ImportCandidate): SelectableSkill {
   const subSkillHint =
     candidate.subSkills.length > 0 ? `, ${candidate.subSkills.length} bundled reference(s)` : "";
   const hint = `${candidate.skill.packageName}@${candidate.skill.packageVersion}${subSkillHint}`;
   return {
     value: candidate.skill.use,
-    label: candidate.skill.skillName,
+    label: `${candidate.skill.skillName} [${candidate.skill.type}]`,
     hint,
+  };
+}
+
+export function toSelectableAgent(agent: AgentType): SelectableAgent {
+  const config = agents[agent];
+  return {
+    value: agent,
+    label: config.displayName,
+    hint: config.skillsDir,
   };
 }
 
 export function sortImportCandidates(candidates: ImportCandidate[]): ImportCandidate[] {
   return [...candidates].sort((left, right) =>
     left.skill.skillName.localeCompare(right.skill.skillName),
+  );
+}
+
+export function sortAgentTypes(agentTypes: readonly AgentType[]): AgentType[] {
+  return [...agentTypes].sort((left, right) =>
+    agents[left].displayName.localeCompare(agents[right].displayName),
   );
 }
 
@@ -46,21 +75,41 @@ export const defaultMultiselectPrompt: MultiselectPrompt = (options) =>
     message: `${options.message} ${pc.dim("(space to toggle)")}`,
   }) as Promise<string[] | symbol>;
 
+export const defaultAgentMultiselectPrompt: AgentMultiselectPrompt = (options) =>
+  p.multiselect<string>({
+    ...options,
+    message: `${options.message} ${pc.dim("(space to toggle)")}`,
+  }) as Promise<AgentType[] | symbol>;
+
 export async function selectImportCandidates(options: {
   candidates: ImportCandidate[];
   prompt?: MultiselectPrompt;
+  skillPrompt?: MultiselectPrompt;
+  agentPrompt?: AgentMultiselectPrompt;
 }): Promise<SelectImportCandidatesResult> {
-  const prompt = options.prompt ?? defaultMultiselectPrompt;
+  const skillPrompt = options.skillPrompt ?? options.prompt ?? defaultMultiselectPrompt;
+  const agentPrompt = options.agentPrompt ?? defaultAgentMultiselectPrompt;
+  const agentChoices = sortAgentTypes(Object.keys(agents) as AgentType[]).map(toSelectableAgent);
+  const selectedAgents = await agentPrompt({
+    message: "Select target agents to import into",
+    options: agentChoices,
+    required: true,
+  });
+
+  if (isPromptCancel(selectedAgents)) {
+    return { cancelled: true, selectedUses: [], targetAgents: [] };
+  }
+
   const choices = sortImportCandidates(options.candidates).map(toSelectableSkill);
-  const selected = await prompt({
+  const selected = await skillPrompt({
     message: "Select TanStack Intent skills to import",
     options: choices,
     required: true,
   });
 
   if (isPromptCancel(selected)) {
-    return { cancelled: true, selectedUses: [] };
+    return { cancelled: true, selectedUses: [], targetAgents: [] };
   }
 
-  return { cancelled: false, selectedUses: selected };
+  return { cancelled: false, selectedUses: selected, targetAgents: selectedAgents };
 }

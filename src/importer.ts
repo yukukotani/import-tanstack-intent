@@ -8,6 +8,13 @@ import {
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
+import {
+  agents,
+  defaultTargetAgents,
+  resolveImportDestinations,
+  type AgentType,
+  type ImportDestination,
+} from "./agents.ts";
 
 export interface IntentCoreApi {
   listIntentSkills: typeof listIntentSkills;
@@ -26,17 +33,27 @@ export interface ListedImportCandidates {
   diagnostics: string[];
 }
 
+export interface ImportedSkillDestinationSummary {
+  agents: AgentType[];
+  agentDisplayNames: string[];
+  skillsRoot: string;
+  destinationPath: string;
+  overwritten: boolean;
+}
+
 export interface ImportedSkillSummary {
   use: string;
   skillName: string;
   destinationName: string;
   destinationPath: string;
+  destinations?: ImportedSkillDestinationSummary[];
   referenceCount: number;
   overwritten: boolean;
 }
 
 export interface ImportSummary {
   importedCount: number;
+  destinationCount?: number;
   overwriteCount: number;
   skills: ImportedSkillSummary[];
   diagnostics: string[];
@@ -131,7 +148,7 @@ export function createImportCandidates(list: IntentSkillList): ImportCandidate[]
     if (previous) {
       throw new ImportTanStackIntentError(
         "destination-collision",
-        `Intent skills "${previous}" and "${skill.use}" both map to .agents/skills/${destinationName}.`,
+        `Intent skills "${previous}" and "${skill.use}" both map to destination name "${destinationName}".`,
       );
     }
     seenDestinations.set(destinationName, skill.use);
@@ -195,6 +212,26 @@ function assertKnownSelections(
     selected.push(candidate);
   }
   return selected;
+}
+
+function assertKnownTargetAgents(targetAgents: readonly string[]): AgentType[] {
+  const uniqueAgents = [...new Set(targetAgents)];
+  if (uniqueAgents.length === 0) {
+    throw new ImportTanStackIntentError(
+      "invalid-selection",
+      "Select at least one target agent to import into.",
+    );
+  }
+
+  const invalidAgents = uniqueAgents.filter((agent) => !Object.hasOwn(agents, agent));
+  if (invalidAgents.length > 0) {
+    throw new ImportTanStackIntentError(
+      "invalid-selection",
+      `Unknown target agent(s): ${invalidAgents.join(", ")}. Valid agents: ${Object.keys(agents).join(", ")}.`,
+    );
+  }
+
+  return uniqueAgents as AgentType[];
 }
 
 function referenceFileName(skillName: string): string {
@@ -274,11 +311,10 @@ async function writeCandidate(options: {
   api: IntentCoreApi;
   candidate: ImportCandidate;
   cwd: string;
+  destinations: ImportDestination[];
 }): Promise<ImportedSkillSummary> {
-  const { api, candidate, cwd } = options;
+  const { api, candidate, cwd, destinations } = options;
   const destinationName = safeSlugForSkill(candidate.skill.skillName);
-  const destinationPath = join(cwd, ".agents", "skills", destinationName);
-  const overwritten = existsSync(destinationPath);
   const references = candidate.subSkills.map((skill) => ({
     skill,
     fileName: referenceFileName(skill.skillName),
@@ -292,29 +328,47 @@ async function writeCandidate(options: {
       loaded: await readRawIntentSkill(api, cwd, reference.skill.use),
     })),
   );
-
-  await rm(destinationPath, { force: true, recursive: true });
-  await mkdir(destinationPath, { recursive: true });
-
-  await writeFile(
-    join(destinationPath, "SKILL.md"),
-    normalizeTrailingNewline(
-      rewriteBundledReferenceLinks(core.content, candidate.skill, references),
-    ),
-    "utf8",
+  const skillContent = normalizeTrailingNewline(
+    rewriteBundledReferenceLinks(core.content, candidate.skill, references),
   );
+  const destinationSummaries: ImportedSkillDestinationSummary[] = [];
 
-  if (loadedReferences.length > 0) {
-    const referencesPath = join(destinationPath, "references");
-    await mkdir(referencesPath, { recursive: true });
-    await Promise.all(
-      loadedReferences.map((reference) =>
-        writeFile(
-          join(referencesPath, reference.fileName),
-          referenceMarkdown(reference.loaded),
-          "utf8",
+  for (const destination of destinations) {
+    const destinationPath = join(cwd, destination.skillsRoot, destinationName);
+    const overwritten = existsSync(destinationPath);
+
+    await rm(destinationPath, { force: true, recursive: true });
+    await mkdir(destinationPath, { recursive: true });
+    await writeFile(join(destinationPath, "SKILL.md"), skillContent, "utf8");
+
+    if (loadedReferences.length > 0) {
+      const referencesPath = join(destinationPath, "references");
+      await mkdir(referencesPath, { recursive: true });
+      await Promise.all(
+        loadedReferences.map((reference) =>
+          writeFile(
+            join(referencesPath, reference.fileName),
+            referenceMarkdown(reference.loaded),
+            "utf8",
+          ),
         ),
-      ),
+      );
+    }
+
+    destinationSummaries.push({
+      agents: destination.agents,
+      agentDisplayNames: destination.displayNames,
+      skillsRoot: destination.skillsRoot,
+      destinationPath,
+      overwritten,
+    });
+  }
+
+  const primaryDestination = destinationSummaries[0];
+  if (!primaryDestination) {
+    throw new ImportTanStackIntentError(
+      "invalid-selection",
+      "Select at least one target agent to import into.",
     );
   }
 
@@ -322,9 +376,10 @@ async function writeCandidate(options: {
     use: candidate.skill.use,
     skillName: candidate.skill.skillName,
     destinationName,
-    destinationPath,
+    destinationPath: primaryDestination.destinationPath,
+    destinations: destinationSummaries,
     referenceCount: references.length,
-    overwritten,
+    overwritten: destinationSummaries.some((destination) => destination.overwritten),
   };
 }
 
@@ -333,20 +388,28 @@ export async function importSelectedSkills(options: {
   cwd?: string;
   diagnostics?: string[];
   selectedUses: string[];
+  targetAgents?: readonly AgentType[];
   api?: IntentCoreApi;
 }): Promise<ImportSummary> {
   const api = options.api ?? defaultIntentCoreApi;
   const cwd = options.cwd ?? process.cwd();
   const selected = assertKnownSelections(options.selectedUses, options.candidates);
+  const targetAgents = assertKnownTargetAgents(options.targetAgents ?? defaultTargetAgents);
+  const destinations = resolveImportDestinations(targetAgents);
   const skills = [];
 
   for (const candidate of selected) {
-    skills.push(await writeCandidate({ api, candidate, cwd }));
+    skills.push(await writeCandidate({ api, candidate, cwd, destinations }));
   }
 
   return {
     importedCount: skills.length,
-    overwriteCount: skills.filter((skill) => skill.overwritten).length,
+    destinationCount: destinations.length,
+    overwriteCount: skills.reduce(
+      (count, skill) =>
+        count + (skill.destinations ?? []).filter((destination) => destination.overwritten).length,
+      0,
+    ),
     skills,
     diagnostics: options.diagnostics ?? [],
   };
@@ -355,6 +418,7 @@ export async function importSelectedSkills(options: {
 export async function runImport(options: {
   cwd?: string;
   selectedUses: string[];
+  targetAgents?: readonly AgentType[];
   api?: IntentCoreApi;
 }): Promise<ImportSummary> {
   const listed = listImportCandidates({ cwd: options.cwd, api: options.api });
@@ -367,5 +431,6 @@ export async function runImport(options: {
     cwd: options.cwd,
     diagnostics: listed.diagnostics,
     selectedUses: options.selectedUses,
+    targetAgents: options.targetAgents,
   });
 }
